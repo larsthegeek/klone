@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2006 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
@@ -34,7 +34,7 @@ struct backend_s
     /* runtime values */
     struct server_s *server;
     u_config_t *config;
-    struct kaddr_s *addr; 
+    u_net_addr_t *na;
     int model;
     int ld;
     void *arg;

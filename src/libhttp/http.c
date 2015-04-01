@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2006 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
@@ -225,9 +225,12 @@ static int http_is_valid_uri(request_t *rq, const char *buf, size_t len)
 
     dbg_err_if (rq == NULL);
     dbg_err_if (buf == NULL);
+    dbg_err_if (len + 1 > URI_MAX);
 
     dbg_err_if ((h = request_get_http(rq)) == NULL);
-    dbg_err_if (u_strlcpy(uri, buf, sizeof uri));
+
+    memcpy(uri, buf, len);
+    uri[len] = '\0';
     
     /* try the url itself */
     if(broker_is_valid_uri(h->broker, h, rq, uri, strlen(uri)))
@@ -479,14 +482,15 @@ static int http_serve(http_t *h, int fd)
     request_t *rq = NULL;
     response_t *rs = NULL;
     io_t *in = NULL, *out = NULL;
-    int cgi = 0, port, rc = HTTP_STATUS_INTERNAL_SERVER_ERROR;
+    int cgi = 0, rc = HTTP_STATUS_INTERNAL_SERVER_ERROR;
     const char *gwi = NULL, *cstr;
     talarm_t *al = NULL;
-    kaddr_t *addr;
+    char addr[128] = { '\0' };
     vhost_t *vhost;
-    struct sockaddr sa;
-    socklen_t sasz;
+    struct sockaddr_storage ss;
+    socklen_t slen;
     char *uri, nuri[URI_MAX];
+    const char *port;
     supplier_t *sup;
 
     u_unused_args(al);
@@ -502,42 +506,40 @@ static int http_serve(http_t *h, int fd)
     request_set_cgi(rq, cgi);
 
     /* save local and peer address into the request object */
-    dbg_err_if(addr_create(&addr));
-
-    if(cgi)
+    if (cgi)
     {
-        if(getenv("REMOTE_ADDR") && getenv("REMOTE_PORT"))
+        if (getenv("REMOTE_ADDR") && getenv("REMOTE_PORT"))
         {
-            port = atoi(getenv("REMOTE_PORT"));
-            dbg_err_if(addr_set(addr, getenv("REMOTE_ADDR"), port));
+            (void) u_addr_fmt(getenv("REMOTE_ADDR"), getenv("REMOTE_PORT"), 
+                    addr, sizeof addr);
+
             dbg_err_if(request_set_addr(rq, addr));
         }
 
-        if(getenv("SERVER_ADDR"))
+        if (getenv("SERVER_ADDR"))
         {
-            if(getenv("SERVER_PORT"))
-                port = atoi(getenv("SERVER_PORT"));
-            else
-                port = 80;
-            dbg_err_if(addr_set(addr, getenv("SERVER_ADDR"), port));
+            if ((port = getenv("SERVER_PORT")) == NULL)
+                port = "80";
+
+            (void) u_addr_fmt(getenv("SERVER_ADDR"), port, addr, sizeof addr);
+
             dbg_err_if(request_set_peer_addr(rq, addr));
         }
-    } else {
+    }
+    else 
+    {
+        slen = sizeof ss;
+
         /* set local addr */
-        sasz = sizeof(struct sockaddr);
-        dbg_err_if(getsockname(fd, &sa, &sasz));
-        dbg_err_if(addr_set_from_sa(addr, &sa, sasz));
-        dbg_err_if(request_set_addr(rq, addr));
+        dbg_err_if(getsockname(fd, (struct sockaddr *) &ss, &slen) == -1);
+        dbg_err_if(request_set_addr(rq, 
+                    u_sa_ntop((struct sockaddr *) &ss, addr, sizeof addr)));
 
         /* set peer addr */
-        sasz = sizeof(struct sockaddr);
-        dbg_err_if(getpeername(fd, &sa, &sasz));
-        dbg_err_if(addr_set_from_sa(addr, &sa, sasz));
-        dbg_err_if(request_set_peer_addr(rq, addr));
+        dbg_err_if(getpeername(fd, (struct sockaddr *) &ss, &slen) == -1);
+        dbg_err_if(request_set_peer_addr(rq, 
+                    u_sa_ntop((struct sockaddr *) &ss, addr, sizeof addr)));
     }
-
-    addr_free(addr);
-    addr = NULL;
 
 #ifdef SSL_ON
     /* create input io buffer */

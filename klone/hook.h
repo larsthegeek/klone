@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2007 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
@@ -21,6 +21,12 @@ typedef struct hook_s hook_t;
 extern "C" {
 #endif 
 
+#ifndef ENABLE_HOOKS
+    #include <ctype.h>
+    #define hook_create(hook) isspace(0)  /* nop */
+    #define hook_free(hook) isspace(0)    /* nop */
+#else
+
 /* server init/term hooks */
 typedef int (*hook_server_init_t)(void);
 typedef int (*hook_server_term_t)(void);
@@ -39,14 +45,18 @@ int hook_child_term( hook_child_term_t );
 typedef int (*hook_request_t)(request_t *, response_t *);
 int hook_request( hook_request_t );
 
+/* server loop hook */
+typedef int (*hook_server_loop_t)(void);
+int hook_server_loop( hook_server_loop_t );
+
 /* hooks container object */
 int hook_create( hook_t **phook);
 int hook_free( hook_t *hook);
 
-#ifdef ENABLE_HOOKS
 /* user-provided function used to register hooks */
 void hooks_setup(void);
-#endif
+
+#endif  /* ENABLE_HOOKS */
 
 #ifdef __cplusplus
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2006 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
@@ -34,10 +34,12 @@ static int supemb_is_valid_uri(http_t *h, request_t *rq, const char *uri,
 
     dbg_err_if (uri == NULL);
     dbg_err_if (mtime == NULL);
+    dbg_err_if (len + 1 > U_FILENAME_MAX);
 
     u_unused_args(h, rq);
 
-    dbg_err_if (u_strlcpy(filename, uri, sizeof filename));
+    memcpy(filename, uri, len);
+    filename[len] = '\0';
 
     if(emb_lookup(filename, &e) == 0)
     {   /* resource found */

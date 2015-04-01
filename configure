@@ -231,10 +231,9 @@ else
     fi
 fi
 
-if [ -d skin/default ]; then
-    # Perform skin variable substitution on files
-    makl_file_sub "skin/default/Makefile"
-fi
+# apply substitutions
+makl_file_sub "skin/default/Makefile" \
+              "doc/doxy/kl1.doxy"
 
 # check if --libs were supplied: in case forward its value to libu build
 __libs=`makl_get "__libs__"`

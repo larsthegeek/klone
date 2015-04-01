@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2006 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
@@ -594,6 +594,7 @@ ssize_t io_read(io_t *io, char *buf, size_t size)
         memcpy(out, io->rbuf + io->roff, wr);
         io->rcount -= wr;
         io->roff += wr;
+        io->rtot += wr;
         out += wr;
         size -= wr;
     }
@@ -878,6 +879,7 @@ ssize_t io_get_until(io_t *io, char stop_at, char *buf, size_t size)
             buf[wr] = 0;
             io->rcount -= wr;
             io->roff += wr;
+            io->rtot += wr;
             len += wr;
             break;
         } else {
@@ -887,6 +889,7 @@ ssize_t io_get_until(io_t *io, char stop_at, char *buf, size_t size)
                 len += io->rcount;
                 buf += io->rcount;
                 size -= io->rcount;
+                io->rtot += io->rcount;
                 io->rcount = 0;
                 io->roff = 0;
                 dbg_err_if((c = io_underflow(io)) < 0);
@@ -898,6 +901,7 @@ ssize_t io_get_until(io_t *io, char stop_at, char *buf, size_t size)
                 len += size;
                 io->rcount -= size;
                 io->roff += size;
+                io->rtot += size;
                 break;
             }
         }

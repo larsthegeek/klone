@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2007 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
@@ -16,10 +16,13 @@
 extern "C" {
 #endif 
 
-#define hook_call( func, ... ) \
-    do { if(ctx && ctx->hook && ctx->hook->func) \
-            ctx->hook->func( __VA_ARGS__ ); \
-    } while(0)
+#ifndef ENABLE_HOOKS
+    #define hook_call( func, ... )
+#else
+    #define hook_call( func, ... ) \
+        do { if(ctx && ctx->hook && ctx->hook->func) \
+                ctx->hook->func( __VA_ARGS__ ); \
+        } while(0)
 
 struct hook_s
 {
@@ -33,7 +36,12 @@ struct hook_s
 
     /* per-connection hook */
     hook_request_t request;
+
+    /* server loop hook */
+    hook_server_loop_t server_loop;
 };
+
+#endif  /* ENABLE_HOOKS */
 
 #ifdef __cplusplus
 }

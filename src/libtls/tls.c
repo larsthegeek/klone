@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005-2008 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
@@ -188,7 +188,7 @@ static int tls_context (SSL_CTX **pc)
 
     dbg_return_if (pc == NULL, ~0);
 
-    c = SSL_CTX_new(SSLv23_server_method());
+    c = SSL_CTX_new(TLSv1_server_method());
     dbg_err_ifm (c == NULL, "error creating SSL CTX: %s", tls_get_error());
 
     *pc = c;

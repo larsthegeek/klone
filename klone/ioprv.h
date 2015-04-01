@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2006 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
@@ -63,6 +63,8 @@ struct io_s
     size_t rbsz;    /* read buffer size                                       */
     size_t rcount;  /* available bytes in the buffer                          */
     size_t roff;    /* offset of the first byte to return                     */
+
+    size_t rtot;    /* total number of bytes read from this io                */
 
     /* underflow buffer */
     char *ubuf;     /* underflow buffer                                       */

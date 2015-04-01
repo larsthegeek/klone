@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2006 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
@@ -25,6 +25,7 @@ typedef int (*talarm_cb_t)(talarm_t *, void *arg);
 
 int timerm_add(int secs, talarm_cb_t cb, void *arg, talarm_t **pa);
 int timerm_del(talarm_t *a);
+int timerm_reschedule(talarm_t *a, int secs, talarm_cb_t cb, void *arg);
 
 #ifdef __cplusplus
 }

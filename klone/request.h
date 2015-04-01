@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2006 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
@@ -18,7 +18,6 @@
 #include <klone/io.h>
 #include <klone/http.h>
 #include <klone/vars.h>
-#include <klone/addr.h>
 #include <klone/vhost.h>
 
 #ifdef __cplusplus
@@ -38,8 +37,8 @@ int request_parse_data(request_t *rq);
 
 io_t* request_io(request_t *rq);
 http_t* request_get_http(request_t *rq);
-kaddr_t* request_get_addr(request_t *rq);
-kaddr_t* request_get_peer_addr(request_t *rq);
+const char *request_get_addr(request_t *rq);
+const char *request_get_peer_addr(request_t *rq);
 header_t* request_get_header(request_t *rq);
 field_t* request_get_field(request_t *rq, const char *name);
 const char* request_get_field_value(request_t *rq, const char *name);
@@ -67,8 +66,8 @@ int request_set_path_info(request_t *rq, const char *path_info);
 int request_set_query_string(request_t *rq, const char *query);
 int request_set_resolved_filename(request_t *rq, const char *resolved);
 int request_set_resolved_path_info(request_t *rq, const char *resolved);
-int request_set_addr(request_t *rq, kaddr_t *addr);
-int request_set_peer_addr(request_t *rq, kaddr_t *addr);
+int request_set_addr(request_t *rq, const char *addr);
+int request_set_peer_addr(request_t *rq, const char *addr);
 void request_set_cgi(request_t *rq, int cgi);
 void request_clear_uri(request_t *rq);
 

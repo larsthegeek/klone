@@ -10,7 +10,7 @@ static inline const char *value_or_dash(const char *v)
 {
     static const char dash[] = "-";
 
-    return (v ? v : dash);
+    return (v && v[0] != '\0') ? v : dash;
 }
 
 static long get_timezone(struct tm *tm)
@@ -35,11 +35,10 @@ int access_log(http_t *h, u_config_t *config, request_t *rq, response_t *rs)
         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
     };
     static const char default_prefix[] = "[access]";
-    const char *ip,  *fn, *value, *prefix;
-    char buf[U_MAX_LOG_LENGTH];
+    const char *fn, *value, *prefix, *addr;
+    char buf[U_MAX_LOG_LENGTH], ip[128] = { '\0' };
     u_config_t *sub;
     vhost_t *vhost;
-    kaddr_t *addr;
     struct timeval tv;
     struct tm tm;
     time_t now;
@@ -94,9 +93,6 @@ int access_log(http_t *h, u_config_t *config, request_t *rq, response_t *rs)
 
     gettimeofday(&tv, NULL);
 
-    addr = request_get_peer_addr(rq);
-    ip = inet_ntoa(addr->sa.sin.sin_addr);
-
     now = tv.tv_sec;
 #ifdef HAVE_LOCALTIME_R
     localtime_r(&now, &tm);
@@ -111,12 +107,14 @@ int access_log(http_t *h, u_config_t *config, request_t *rq, response_t *rs)
         prefix = default_prefix;
     }
 
+    addr = request_get_peer_addr(rq);
+
     /* build the log message */
     dbg_err_if(u_snprintf(buf, sizeof(buf),
             "%s %s - - [%02d/%s/%4d:%02d:%02d:%02d %ld]"
             " \"%s\" %d %s \"%s\" \"%s\" \"-\"", 
             prefix,
-            value_or_dash(ip),
+            value_or_dash(u_addr_get_ip(addr, ip, sizeof ip)),
             /* date */ 
             tm.tm_mday, months[tm.tm_mon], tm.tm_year,
             /* time */ 

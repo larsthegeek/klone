@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2006 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
@@ -479,11 +479,8 @@ int session_mem_module_init(u_config_t *config, session_opt_t *so)
     so->max_count = 0;  /* no limits */
     so->mem_limit = 0;  /* no limits */
 
-    if(config)
+    if(config && u_config_get_subkey(config, "memory", &c) == 0)
     {
-        /* get configuration parameters */
-        dbg_err_if(u_config_get_subkey(config, "memory", &c));
-
         if((v = u_config_get_subkey_value(c, "max_count")) != NULL)
             so->max_count = atoi(v);
 

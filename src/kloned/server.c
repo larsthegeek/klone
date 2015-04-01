@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2006 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
@@ -26,7 +26,6 @@
 #include <klone/context.h>
 #include <klone/ppc.h>
 #include <klone/ppc_cmd.h>
-#include <klone/addr.h>
 #include <klone/utils.h>
 #include <klone/klog.h>
 #include <klone/hook.h>
@@ -51,49 +50,13 @@ static void server_close_fd(server_t *s, int fd);
 
 static int server_be_listen(backend_t *be)
 {
-    enum { DEFAULT_BACKLOG = 1024 };
-    int d = 0, backlog = 0, val = 1;
-    u_config_t *subkey;
-
     dbg_return_if (be == NULL, ~0);
-    dbg_return_if (be->addr == NULL, ~0);
+    dbg_return_if (be->na == NULL, ~0);
 
-    switch(be->addr->type)
-    {
-        case ADDR_IPV4:
-            dbg_err_if((d = socket(AF_INET, SOCK_STREAM, 0)) < 0);
-            #ifndef OS_WIN
-            /* on win with this flag more then on process will be allowed to
-               bind to the same port (SO_EXCLUSIVEADDRUSE is for releases 
-               newer then Windows XP */
-            dbg_err_if(setsockopt(d, SOL_SOCKET, SO_REUSEADDR, (void *)&val, 
-                sizeof(int)) < 0);
-            #endif
-            dbg_err_if(bind(d, (void*)&be->addr->sa.sin, 
-                sizeof(struct sockaddr_in)));
-            break;
-        case ADDR_IPV6:
-        case ADDR_UNIX:
-        default:
-            crit_err_if("unupported addr type");
-    }
-
-    if(!u_config_get_subkey(be->config, "backlog", &subkey))
-        backlog = atoi(u_config_get_value(subkey));
-
-    if(!backlog)
-        backlog = DEFAULT_BACKLOG;
-
-    dbg_err_if(listen(d, backlog));
-
-    be->ld = d;
+    /* Return a socket descriptor bound to the configured endpoint. */
+    warn_return_if ((be->ld = u_net_sd_by_addr(be->na)) == -1, ~0);
 
     return 0;
-err:
-    warn_strerror(errno);
-    if(d)
-        close(d);
-    return ~0;
 }
 
 
@@ -187,7 +150,7 @@ static void server_sigint(int sig)
 {
     u_unused_args(sig);
 
-    warn("SIGINT");
+    u_warn("SIGINT");
 
     if(ctx && ctx->server)
         server_stop(ctx->server);
@@ -205,7 +168,7 @@ static void server_sigterm(int sig)
     if(ctx->pipc)
         _exit(0); 
 
-    warn("SIGTERM");
+    u_warn("SIGTERM");
 
     if(ctx && ctx->server)
         server_stop(ctx->server);
@@ -234,10 +197,10 @@ static void server_waitpid(server_t *s)
     while((pid = waitpid(-1, &status, WNOHANG)) > 0) 
     {
         if(WIFEXITED(status) && WEXITSTATUS(status) != EXIT_SUCCESS)
-            warn("pid [%u], exit code [%d]", pid, WEXITSTATUS(status));
+            u_warn("pid [%u], exit code [%d]", pid, WEXITSTATUS(status));
 
         if(WIFSIGNALED(status))
-            warn("pid [%u], signal [%d]", pid, WTERMSIG(status));
+            u_warn("pid [%u], signal [%d]", pid, WTERMSIG(status));
 
         /* decrement child count */
         server_reap_child(s, pid);
@@ -346,9 +309,9 @@ static int server_backend_detach(server_t *s, backend_t *be)
     dbg_return_if (s == NULL, ~0);
     dbg_return_if (be == NULL, ~0);
 
-    addr_free(be->addr);
+    u_net_addr_free(be->na);
     be->server = NULL;
-    be->addr = NULL;
+    be->na = NULL;
     be->config = NULL;
 
     close(be->ld);
@@ -577,7 +540,7 @@ err:
     return -1;
 #else   /* !HAVE_FORK */
     u_unused_args(s, be);
-    warn("Only iterative mode is supported (fork(2) unavailable on target OS)");
+    u_warn("Only iterative mode is enabled (fork(2) unsupported by target OS)");
     return -1;
 #endif  /* HAVE_FORK */
 }
@@ -715,7 +678,6 @@ static int server_listen(server_t *s)
     
     LIST_FOREACH(be, &s->bes, np)
     {
-        /* bind to be->addr */
         dbg_err_if(server_be_listen(be));
 
         /* watch the listening socket */
@@ -789,26 +751,6 @@ err:
     return ~0;
 }
 
-static int server_set_socket_opts(server_t *s, int sock)
-{
-    int on = 1; 
-
-    u_unused_args(s);
-
-    dbg_err_if (sock < 0);
-
-#if defined(HAVE_TCP_NODELAY) && !defined(__minix)
-    /* Disable Nagle algorithm.  Note that Minix has the TCP_NODELAY symbol 
-     * but not its implementation. */
-    warn_err_sif(setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, 
-        (void*) &on, sizeof(int)) < 0);
-#endif  /* HAVE_TCP_NODELAY && !__minix */
-
-    return 0;
-err:
-    return ~0;
-}
-
 static int server_dispatch(server_t *s, int fd)
 {
     backend_t *be;
@@ -827,8 +769,9 @@ static int server_dispatch(server_t *s, int fd)
     /* accept the pending connection */
     dbg_err_if(server_be_accept(s, be, &ad));
 
-    /* set socket options on accepted socket */
-    dbg_err_if(server_set_socket_opts(s, ad));
+    /* Disable Nagle on the socket. Note that this may fail if the socket is 
+     * in the UNIX family or it is using the SCTP transport instead of TCP. */
+    (void) u_net_nagle_off(ad);
 
     /* serve the page */
     dbg_err_if(server_be_serve(s, be, ad));
@@ -967,10 +910,10 @@ int server_loop(server_t *s)
         memcpy(&wrfds, &s->wrfds, sizeof(fd_set));
         memcpy(&exfds, &s->exfds, sizeof(fd_set));
 
+    again:
         /* wake up every second */
         tv.tv_sec = 1; tv.tv_usec = 0;
 
-    again:
         rc = select(1 + s->hfd, &rdfds, &wrfds, &exfds, &tv); 
         if(rc == -1 && errno == EINTR)
             goto again; /* interrupted */
@@ -981,20 +924,28 @@ int server_loop(server_t *s)
             server_waitpid(s);
 #endif
 
-        /* call klog_flush if flush timeout has expired and select() timeouts */
-        if(s->klog_flush && ctx->pipc == 0)
+        /* parent only */
+        if(ctx->pipc == 0)
         {
-            /* flush the log buffer */
-            klog_flush(s->klog);
+            /* call klog_flush if flush timeout has expired and select() timeouts */
+            if(s->klog_flush)
+            {
+                /* flush the log buffer */
+                klog_flush(s->klog);
 
-            /* reset the flag */
-            s->klog_flush = 0; 
+                /* reset the flag */
+                s->klog_flush = 0;
 
-            U_FREE(s->al_klog_flush);
+                U_FREE(s->al_klog_flush);
 
-            /* re-set the timer */
-            dbg_err_if(timerm_add(SERVER_LOG_FLUSH_TIMEOUT, 
-                server_cb_klog_flush, s, &s->al_klog_flush));
+                /* re-set the timer */
+                dbg_err_if(timerm_add(SERVER_LOG_FLUSH_TIMEOUT,
+                    server_cb_klog_flush, s, &s->al_klog_flush));
+            }
+
+            /* server loop hook - trigger only upon timeout and not upon client request */
+            if(rc == 0)
+                hook_call(server_loop);
         }
 
         /* for each signaled listening descriptor */
@@ -1082,7 +1033,7 @@ err:
 
 static int server_setup_backend(server_t *s, backend_t *be)
 {
-    u_config_t *subkey;
+    const char *a;
 
     dbg_return_if (s == NULL, ~0);
     dbg_return_if (be == NULL, ~0);
@@ -1090,26 +1041,19 @@ static int server_setup_backend(server_t *s, backend_t *be)
     /* server count */
     s->nbackend++;
 
-    /* parse and create the bind kaddr_t */
-    warn_err_ifm(u_config_get_subkey(be->config, "addr", &subkey),
+    /* Get 'addr' value from config.  Expect it to be given in libu::net
+     * URI format, e.g. something in between 'tcp4://192.168.0.1:80' and 
+     * 'tcp6://[*]:8080'. */
+    warn_err_ifm ((a = u_config_get_subkey_value(be->config, "addr")) == NULL,
         "missing or bad '<servname>.addr' value");
 
-    dbg_err_if(addr_create(&be->addr));
-
-    if(strcasecmp(be->proto, "https") == 0)
-        dbg_err_if(addr_set_ipv4_port(be->addr, 443)); /* default https port */
-    else
-        dbg_err_if(addr_set_ipv4_port(be->addr, 80)); /* default http port */
-
-    dbg_err_if(addr_set_from_config(be->addr, subkey));
+    /* Parse and internalize it. */
+    warn_err_ifm (u_net_uri2addr(a, U_NET_SSOCK, &be->na), 
+            "bad syntax for 'addr' value");
 
     return 0;
 err:
-    if(be->addr)
-    {
-        addr_free(be->addr);
-        be->addr = NULL;
-    }
+    u_warn("'addr' syntax has changed with klone 3: check libu URI format");
     return ~0;
 }
 
@@ -1375,7 +1319,7 @@ int server_create(u_config_t *config, int foreground, server_t **ps)
 
     return 0;
 err:
-    warn("server init error (config error?)");
+    u_warn("server init error (config error?)");
     U_FREE(n);
     if(s)
     {

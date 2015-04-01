@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2006 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
@@ -20,7 +20,6 @@
 #include <klone/io.h>
 #include <klone/ioprv.h>
 #include <klone/http.h>
-#include <klone/addr.h>
 #include <klone/vars.h>
 #include <klone/timer.h>
 #include <klone/vhost.h>
@@ -49,7 +48,8 @@ struct request_s
     char *content_encoding;     /* 7bit/8bit/base64/qp, etc                 */
 	size_t content_length;      /* content-length http header field         */
     time_t if_modified_since;   /* time_t IMS header                        */
-    kaddr_t local_addr, peer_addr; /* local and perr address                 */
+    char local_addr[256];       /* local address                            */
+    char peer_addr[256];        /* peer address                             */
     int cgi;                    /* if running in cgi mode                   */
     size_t idle_timeout;        /* max # of secs to wait for the request    */
     size_t post_timeout;        /* max # of secs for reading POSTed data    */
@@ -61,6 +61,7 @@ struct request_s
     supplier_t *si_sup;
     void *si_handle;
     time_t si_mtime;
+    size_t body_off;
 };
 
 typedef struct upload_info_s    /* uploaded file info struct         */
@@ -1145,67 +1146,45 @@ err:
 /* 
  * Read from io until obuf is full or until stop_at string is found.
  *
- * Boyer-Moore algorithm is used for efficiency. 
- *
  * Returns the number of bytes written to obuf 
  */
 static ssize_t read_until(io_t *io, const char *stop_at, char *obuf, 
     size_t size, int *found)
 {
-    /* use this macro before accessing obuf[idx] elem. the macro will load from
-       the given io enough bytes to access the required byte. if the buffer
-       is too small (i.e. less then idx bytes long) the function will return */
-    #define SETUP_BUF_ACCESS_AT(idx)                                        \
-        if(idx >= wtot) {                                                   \
-            if(idx >= size)                                                 \
-                return wtot; /* the output buffer is full */                \
-                                                                            \
-            /* we need to fetch some more bytes to access obuf[i] */        \
-            dbg_err_if((rc = io_read(io, wbuf, idx + 1 - wtot)) < 0);       \
-            if(rc == 0 || rc < idx + 1 - wtot)                              \
-                return wtot + rc; /* eof or short count */                  \
-            wbuf += rc;                                                     \
-            wtot += rc;                                                     \
-        }
+    char *dst = obuf;
+    const char *ptr = stop_at, *end = stop_at + strlen(stop_at);
+    int rc;
+    size_t slen = strlen(stop_at);
 
-    int sa_len = strlen(stop_at);
-    int i, t, shift[256], rc;
-    unsigned char c;
-    size_t wtot = 0;
-    char *wbuf = obuf;
+    dbg_err_if(size < slen); /* stop_at can't be bigger then the output buf */
 
-    dbg_err_if (io == NULL);
-    dbg_err_if (stop_at == NULL);
-    dbg_err_if (obuf == NULL);
-    /* size may be 0 */
-    dbg_err_if (found == NULL);
-
-    for(i = 0; i < 256; ++i)  
-        shift[i] = sa_len;
-
-    for(i = 0; i < sa_len; ++i)
-        shift[ (int)stop_at[i] ] = sa_len - i - 1;
-
-    *found = 0;
-
-    for(i = t = sa_len-1; t >= 0; --i, --t)
+    for(*found = 0; *found == 0; )
     {
-        SETUP_BUF_ACCESS_AT(i);
+        /* at all times the output buffer must be big enough to contain the 
+         * boundary string so everytime we meet the first char of the boundary 
+         * we check the avail size of the output buffer and return if the 
+         * whole boundary doesn't fit into it (read_until will be called 
+         * again with an empty output buffer) */
+        if(ptr == stop_at && size < slen + 1)
+            break;
 
-        while((c = obuf[i]) != stop_at[t]) 
-        {
-            i += U_MAX(sa_len - t, shift[c]);
+        rc = io_read(io, dst, 1);
+        dbg_err_if(rc < 0);
 
-            SETUP_BUF_ACCESS_AT(i);
+        if(rc == 0)
+            break; /* eof */
 
-            t = sa_len - 1;
-        }
+        if(*ptr != *dst)
+            ptr = stop_at;
+
+        if(*ptr == *dst && ++ptr == end)
+            *found = 1;
+
+        dst++;
+        size--;
     }
 
-    *found = 1;
-
-    /* found; obuf[i] is where the matching string is */
-    return wtot;
+    return dst - obuf;
 err:
     return -1;
 }
@@ -1385,7 +1364,7 @@ static ssize_t request_read_until_boundary(request_t *rq, io_t *io,
         /* write all but the last bound_len + 2 (\r\n) bytes */
         if(found)
         {
-            rc -= (bound_len + 2);
+            rc -= bound_len;
             dbg_err_if(rc < 0);
 
             /* zero-term the buffer (removing the boundary) */
@@ -1406,8 +1385,10 @@ static ssize_t request_read_until_boundary(request_t *rq, io_t *io,
 
         warn_err_ifm(trb > rq->post_maxsize, "POST data exceed post_maxsize");
 
-        /* if we're using the buf on the heap then append read data */
-        if(ubuf)
+        /* if we're using the buf on the heap then append read data; rc will
+         * be zero if the last read returned just the boundary (that it's  not
+         * going to be written to the output buffer) */
+        if(ubuf && rc)
             dbg_err_if(u_buf_append(ubuf, buf, rc));
     }
 
@@ -1430,7 +1411,7 @@ static int request_parse_multipart_chunk(request_t *rq, io_t *io,
     var_t *v = NULL;
     u_buf_t *ubuf = NULL;
     char name[PRMSZ], filename[PRMSZ], buf[BUFSZ];
-    size_t bound_len;
+    size_t bound_len, rall;
     int found;
     ssize_t rc;
 
@@ -1464,10 +1445,10 @@ static int request_parse_multipart_chunk(request_t *rq, io_t *io,
             rc = read_until(io, boundary, buf, BUFSZ, &found);
             dbg_err_if(rc <= 0); /* on error or eof exit */
 
-            /* write all but the last bound_len + 2 (\r\n) bytes */
+            /* write all but the last bound_len bytes (i.e. the boundary) */
             if(found)
             {
-                rc -= (bound_len + 2);
+                rc -= bound_len;
                 dbg_err_if(rc < 0);
             }
 
@@ -1484,12 +1465,6 @@ static int request_parse_multipart_chunk(request_t *rq, io_t *io,
         /* add this file to the uploaded file list */
         dbg_err_if(request_add_uploaded_file(rq, name, filename, buf, 
             header_get_field_value(h, "Content-Type")));
-
-        /* could be "\r\n" for not-ending boundaries or "--\r\n" */
-        dbg_err_if(io_gets(io, buf, BUFSZ) <= 0);
-
-        if(strncmp(buf, "--", 2) == 0)
-            *eof = 1; /* end of MIME stuff */
 
     } else {
         /* read data before the boundary into the buffer. if the buffer is too 
@@ -1508,12 +1483,23 @@ static int request_parse_multipart_chunk(request_t *rq, io_t *io,
 
         /* also add it to the post array */
         dbg_if(vars_add(rq->args_post, v));
+    }
 
-        /* could be "\r\n" for not-ending boundaries or "--\r\n" */
-        dbg_err_if(io_gets(io, buf, BUFSZ) <= 0);
+    /* will read "\r\n" for not-ending boundaries, "--" otherwise */
+    dbg_err_if(io_read(io, buf, 2) <= 0);
 
-        if(strncmp(buf, "--", 2) == 0)
-            *eof = 1; /* end of MIME stuff */
+    if(strncmp(buf, "--", 2) == 0)
+    {
+        *eof = 1; /* end of MIME stuff */
+
+        rall = rq->content_length + rq->body_off;
+
+        /* read and ignore the epilogue (if any) */
+        while(io->rtot < rall)
+        {
+            if(io_read(io, buf, U_MIN(rall - io->rtot, sizeof(buf))) <= 0)
+                break;
+        }
     }
 
     if(ubuf)
@@ -1525,8 +1511,12 @@ static int request_parse_multipart_chunk(request_t *rq, io_t *io,
 err:
     if(ubuf)
         u_buf_free(ubuf);
-    if(tmpio)
+    if(tmpio) {
+        /* free space occupied by partial uploads */
+        if(io_name_get(tmpio, buf, BUFSZ) == 0)
+            u_remove(buf);
         io_free(tmpio);
+    }
     if(h)
         header_free(h);
     return ~0;
@@ -1535,10 +1525,10 @@ err:
 static int request_parse_multipart_data(request_t *rq)
 {
     enum { BOUNDARY_BUFSZ = 128, BUFSZ = 1024 }; 
-    char boundary[BOUNDARY_BUFSZ], buf[BUFSZ];
-    int eof;
+    char boundary[BOUNDARY_BUFSZ], nl_boundary[BOUNDARY_BUFSZ], buf[BUFSZ], *nl;
+    int eof, rc;
 
-    /* boundaries always start with -- */
+    /* boundary lines must start with -- */
     strcpy(boundary, "--");
 
     dbg_err_if(request_get_fieldparam(rq, "Content-Type", "boundary",
@@ -1549,14 +1539,18 @@ static int request_parse_multipart_data(request_t *rq)
     /* skip the MIME preamble (usually not used in HTTP) */
     for(;;)
     {
-        dbg_err_if(io_gets(rq->io, buf, BUFSZ) <= 0);
+        dbg_err_if((rc = io_gets(rq->io, buf, BUFSZ)) <= 0);
         if(!strncmp(buf, boundary, strlen(boundary)))
             break; /* boundary found */
     }
 
+    /* nl_boundary will contain: "\r\n--" + boundary */
+    strcpy(nl_boundary, "\r\n");
+    dbg_err_if(u_strlcat(nl_boundary, boundary, sizeof(nl_boundary)));
+
     /* cycle on each MIME part */
     for(eof = 0; eof == 0; )
-        dbg_err_if(request_parse_multipart_chunk(rq, rq->io, boundary, &eof));
+        dbg_err_if(request_parse_multipart_chunk(rq, rq->io, nl_boundary,&eof));
 
     return 0;
 err:
@@ -1580,6 +1574,7 @@ static int request_cb_close_socket(talarm_t *al, void *arg)
 int request_parse_data(request_t *rq)
 {
     talarm_t *al = NULL;
+    io_t *io = request_io(rq);
     int rc = HTTP_STATUS_BAD_REQUEST;
 
     if(rq->method == HM_POST)
@@ -1593,6 +1588,10 @@ int request_parse_data(request_t *rq)
 
         if(rq->content_length == 0)
             return 0; /* no data posted */
+
+        /* bytes read so far; will be used to know how many bytes we can read
+         * from the client based on "Content-Length" value */
+        rq->body_off = io->rtot;
 
         /* set a timeout to abort POST if it takes too long ... */
         dbg_err_if(timerm_add(rq->post_timeout, request_cb_close_socket, 
@@ -1941,60 +1940,56 @@ int request_free(request_t *rq)
     return 0;
 }
 
-/* save the local address struct (ip and port) in the request obj */
-int request_set_addr(request_t *rq, kaddr_t *addr)
+/* save the local connected address in the request obj */
+int request_set_addr(request_t *rq, const char *addr)
 {
     dbg_return_if (rq == NULL, ~0);
     dbg_return_if (addr == NULL, ~0);
 
-    memcpy(&rq->local_addr, addr, sizeof(kaddr_t));
-
-    return 0;
+    return u_strlcpy(rq->local_addr, addr, sizeof rq->local_addr);
 }
 
-/* save the peer address struct (ip and port) in the request obj */
-int request_set_peer_addr(request_t *rq, kaddr_t *addr)
+/* save the address of the connected peer in the request obj */
+int request_set_peer_addr(request_t *rq, const char *addr)
 {
     dbg_return_if (rq == NULL, ~0);
     dbg_return_if (addr == NULL, ~0);
 
-    memcpy(&rq->peer_addr, addr, sizeof(kaddr_t));
-
-    return 0;
+    return u_strlcpy(rq->peer_addr, addr, sizeof rq->peer_addr);
 }
 
 /** 
  * \ingroup request
  * \brief   Return the local address
  *  
- * Return the IP address and port of the server end of the socket
+ * Return a string containing the address of the accepted the socket
  *
  * \param rq    request object
  *  
- * \return      a pointer to an kaddr_t type
+ * \return      the address string 
  */
-kaddr_t* request_get_addr(request_t *rq)
+const char *request_get_addr(request_t *rq)
 {
     dbg_return_if (rq == NULL, NULL);
 
-    return &rq->local_addr;
+    return rq->local_addr;
 }
 
 /** 
  * \ingroup request
  * \brief   Return the peer address
  *  
- * Return the IP address and port of the client connected to the web server
+ * Return a string containing the address of the connected peer
  *
  * \param rq    request object
  *  
- * \return      a pointer to an kaddr_t type
+ * \return      the address string
  */
-kaddr_t* request_get_peer_addr(request_t *rq)
+const char *request_get_peer_addr(request_t *rq)
 {
     dbg_return_if (rq == NULL, NULL);
 
-    return &rq->peer_addr;
+    return rq->peer_addr;
 }
 
 /** 

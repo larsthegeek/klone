@@ -45,6 +45,8 @@ ifdef KLONE_HOST_PATCH_URI
 export KLONE_HOST_PATCH_URI
 endif
 
+FETCH_CMD ?= wget
+
 .PHONY: klone-src help import-help configure-help makefile-help
 
 KLONE_DIR = $(CURDIR)/klone-$(KLONE_VERSION)
@@ -96,6 +98,8 @@ $(KLONE_DIR)/Makefile: Makefile
 
 klone-src: $(KLONE_TGZ)
 	tar zxvf $(KLONE_TGZ)
+	find . -exec touch {} \;    # avoid errors due to stale files caused by
+	                            # unsynced clocks (e.g. missing embfs files)
 
 $(WEBAPP_DIR):
 	cp -r $(KLONE_DIR)/webapp $@
@@ -104,7 +108,7 @@ $(KLONE_TGZ):
 	@if [ -f "$(KLONE_CACHE_DIR)/$(KLONE_TGZ)" ]; then \
 	    cp "$(KLONE_CACHE_DIR)/$(KLONE_TGZ)" . ; \
 	else \
-	    wget -c http://koanlogic.com/download/klone/$(KLONE_TGZ) && \
+	    $(FETCH_CMD) http://koanlogic.com/download/klone/$(KLONE_TGZ) && \
         if [ -n "$(KLONE_CACHE_DIR)" ]; then \
             mkdir -p "$(KLONE_CACHE_DIR)" ; \
 	        cp $(KLONE_TGZ) "$(KLONE_CACHE_DIR)" ; \
